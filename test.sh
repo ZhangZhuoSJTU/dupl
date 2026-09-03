@@ -19,16 +19,21 @@ export TZ=UTC
 # and some tests assert temp paths, so pin it to the container default.
 export TMPDIR=/tmp
 
+# Retry individually failed tests, as programbench eval does, to absorb
+# flakes from tests that race on shared files under pytest-xdist.
+export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --reruns=2 --reruns-delay=1"
+
+# Optional per-project environment overrides (kept in the repo).
+[ -f .programbench/env ] && . .programbench/env
+
 INSTANCE=mibk__dupl.1bf052b
 BASE_URL="https://huggingface.co/datasets/programbench/ProgramBench-Tests/resolve/main/$INSTANCE/tests"
 PB=.programbench
 
 ./compile.sh
 
-if [ ! -d "$PB/venv" ]; then
-    python3 -m venv "$PB/venv"
-    "$PB/venv/bin/pip" install -q pytest pytest-timeout pytest-xdist
-fi
+[ -d "$PB/venv" ] || python3 -m venv "$PB/venv"
+"$PB/venv/bin/pip" install -q pytest pytest-timeout pytest-xdist pytest-rerunfailures
 export PATH="$PWD/$PB/venv/bin:$PATH"
 
 mkdir -p "$PB/tests"
@@ -45,6 +50,10 @@ while read -r branch; do
     # docs, ...) that the tarball does not ship.
     git ls-files -z | tar --null -cf - -T - | tar -xpf - -C "$dir"
     tar xzf "$tar" -C "$dir"
+    # ProgramBench's eval also seeds a synthetic git repo in the workspace;
+    # tools that locate the repo root via .git (rumdl, ripsecrets, ...) must
+    # find the run dir, not this repo's own .git further up.
+    git -C "$dir" init -q
     cp executable "$dir/executable" && chmod +x "$dir/executable"
     # The suites were authored in containers whose workspace root is
     # /workspace, and some tests/goldens embed that absolute path. Rewrite it
@@ -88,14 +97,24 @@ for branch in Path(".programbench/branches.txt").read_text().split():
     if not xml.exists():
         print(f"{branch}: NO RESULTS (see .programbench/run/{branch}/workspace/run.log)")
         continue
-    n = ok = skip = 0
+    # pytest-rerunfailures records every attempt as its own <testcase> (the
+    # non-final attempts are empty), so aggregate attempts per test name: a
+    # test fails only if its final attempt carries a failure/error child.
+    # Parametrized test IDs can embed workspace paths, which the harness
+    # rewrote to the local run dir; map them back so names match the
+    # benchmark's ignore lists.
+    prefix = str(Path.cwd() / f".programbench/run/{branch}/workspace")
+    cases: dict[str, set] = {}
     for case in ET.fromstring(xml.read_text()).iter("testcase"):
-        name = f"{case.get('classname')}.{case.get('name')}"
+        name = f"{case.get('classname')}.{case.get('name')}".replace(prefix, "/workspace")
+        cases.setdefault(name, set()).update(c.tag for c in case)
+    n = ok = skip = 0
+    for name, tags in cases.items():
         if f"{branch}/{name}" in ignored:
             skip += 1
             continue
         n += 1
-        ok += not [c for c in case if c.tag in ("failure", "error", "skipped")]
+        ok += not (tags & {"failure", "error", "skipped"})
     print(f"{branch}: {ok}/{n} passed ({skip} ignored)")
     total += n
     passed += ok
