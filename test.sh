@@ -23,6 +23,15 @@ export TMPDIR=/tmp
 # flakes from tests that race on shared files under pytest-xdist.
 export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --reruns=2 --reruns-delay=1"
 
+# The benchmark containers shipped an older git that names the initial branch
+# "master"; modern git names it "main". Tests that `git init` a repo and check
+# refs/heads/master (or expect `checkout -b main` to be new) then diverge. Pin
+# an isolated git config so every git in the run defaults to master, matching
+# the containers, and mark test dirs safe so git commands do not refuse them.
+export GIT_CONFIG_GLOBAL="$PWD/.programbench/gitconfig"
+export GIT_CONFIG_SYSTEM=/dev/null
+printf '[init]\n\tdefaultBranch = master\n[safe]\n\tdirectory = *\n' > "$GIT_CONFIG_GLOBAL"
+
 # Optional per-project environment overrides (kept in the repo).
 [ -f .programbench/env ] && . .programbench/env
 
@@ -33,7 +42,7 @@ PB=.programbench
 ./compile.sh
 
 [ -d "$PB/venv" ] || python3 -m venv "$PB/venv"
-"$PB/venv/bin/pip" install -q pytest pytest-timeout pytest-xdist pytest-rerunfailures
+"$PB/venv/bin/pip" install -q pytest pytest-timeout pytest-xdist pytest-rerunfailures tomli libtmux
 export PATH="$PWD/$PB/venv/bin:$PATH"
 
 mkdir -p "$PB/tests"
