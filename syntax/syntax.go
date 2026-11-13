@@ -47,6 +47,13 @@ func serial(n *Node, stream *[]*Node) int {
 	return count + 1
 }
 
+func resizeFragment(buf []*Node, size int) []*Node {
+	if cap(buf) < size {
+		return make([]*Node, size)
+	}
+	return buf
+}
+
 // FindSyntaxUnits finds all complete syntax units in the match group and returns them
 // with the corresponding hash.
 func FindSyntaxUnits(data []*Node, m suffixtree.Match, threshold int) Match {
@@ -74,8 +81,13 @@ func FindSyntaxUnits(data []*Node, m suffixtree.Match, threshold int) Match {
 	}
 
 	match := Match{Frags: make([][]*Node, len(m.Ps))}
+	width := len(indexes)
+	storage := make([]*Node, len(m.Ps)*width)
+
 	for i, pos := range m.Ps {
-		match.Frags[i] = make([]*Node, len(indexes))
+		start := i * width
+		buf := storage[start:start : start+width]
+		match.Frags[i] = resizeFragment(buf, width)
 		for j, index := range indexes {
 			match.Frags[i][j] = data[int(pos)+index]
 		}
