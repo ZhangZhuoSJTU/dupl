@@ -23,11 +23,10 @@ func (p *text) PrintHeader() error { return nil }
 func (p *text) PrintClones(dups [][]*syntax.Node) error {
 	p.cnt++
 	fmt.Fprintf(p.w, "found %d clones:\n", len(dups))
-	clones, err := prepareClonesInfo(p.ReadFile, dups)
+	clones, err := clonesInfo(p.ReadFile, dups, false)
 	if err != nil {
 		return err
 	}
-	sort.Sort(byNameAndLine(clones))
 	for _, cl := range clones {
 		fmt.Fprintf(p.w, "  %s:%d,%d\n", cl.filename, cl.lineStart, cl.lineEnd)
 	}
@@ -39,15 +38,16 @@ func (p *text) PrintFooter() error {
 	return err
 }
 
-func prepareClonesInfo(fread ReadFile, dups [][]*syntax.Node) ([]clone, error) {
+// clonesInfo resolves each duplicate fragment to its location in the
+// source, sorted by file name and starting line. If withFragment is set,
+// the de-indented source code of each fragment is included as well.
+func clonesInfo(fread ReadFile, dups [][]*syntax.Node, withFragment bool) ([]clone, error) {
 	clones := make([]clone, len(dups))
 	for i, dup := range dups {
-		cnt := len(dup)
-		if cnt == 0 {
+		if len(dup) == 0 {
 			panic("zero length dup")
 		}
-		nstart := dup[0]
-		nend := dup[cnt-1]
+		nstart, nend := dup[0], dup[len(dup)-1]
 
 		file, err := fread(nstart.Filename)
 		if err != nil {
@@ -56,8 +56,12 @@ func prepareClonesInfo(fread ReadFile, dups [][]*syntax.Node) ([]clone, error) {
 
 		cl := clone{filename: nstart.Filename}
 		cl.lineStart, cl.lineEnd = blockLines(file, nstart.Pos, nend.End)
+		if withFragment {
+			cl.fragment = fragment(file, nstart.Pos, nend.End)
+		}
 		clones[i] = cl
 	}
+	sort.Sort(byNameAndLine(clones))
 	return clones, nil
 }
 

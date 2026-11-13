@@ -7,50 +7,26 @@ type Match struct {
 	Len Pos
 }
 
-type posList struct {
-	positions []Pos
-}
+// contextList groups suffix positions by their left context, i.e. by the
+// value of the token immediately preceding each position.
+type contextList map[int][]Pos
 
-func newPosList() *posList {
-	return &posList{make([]Pos, 0)}
-}
-
-func (p *posList) append(p2 *posList) {
-	p.positions = append(p.positions, p2.positions...)
-}
-
-func (p *posList) add(pos Pos) {
-	p.positions = append(p.positions, pos)
-}
-
-type contextList struct {
-	lists map[int]*posList
-}
-
-func newContextList() *contextList {
-	return &contextList{make(map[int]*posList)}
-}
-
-func (c *contextList) getAll() []Pos {
-	keys := make([]int, 0, len(c.lists))
-	for k := range c.lists {
+func (c contextList) getAll() []Pos {
+	keys := make([]int, 0, len(c))
+	for k := range c {
 		keys = append(keys, k)
 	}
 	sort.Ints(keys)
 	var ps []Pos
 	for _, k := range keys {
-		ps = append(ps, c.lists[k].positions...)
+		ps = append(ps, c[k]...)
 	}
 	return ps
 }
 
-func (c *contextList) append(c2 *contextList) {
-	for lc, pl := range c2.lists {
-		if _, ok := c.lists[lc]; ok {
-			c.lists[lc].append(pl)
-		} else {
-			c.lists[lc] = pl
-		}
+func (c contextList) append(c2 contextList) {
+	for lc, ps := range c2 {
+		c[lc] = append(c[lc], ps...)
 	}
 }
 
@@ -66,20 +42,18 @@ func (t *STree) FindDuplOver(threshold int) <-chan Match {
 	return ch
 }
 
-func walkTrans(parent *tran, length, threshold int, ch chan<- Match) *contextList {
+func walkTrans(parent *tran, length, threshold int, ch chan<- Match) contextList {
 	s := parent.state
 
-	cl := newContextList()
+	cl := make(contextList)
 
 	if len(s.trans) == 0 {
-		pl := newPosList()
 		start := parent.end + 1 - Pos(length)
-		pl.add(start)
 		ch := 0
 		if start > 0 {
 			ch = s.tree.data[start-1].Val()
 		}
-		cl.lists[ch] = pl
+		cl[ch] = []Pos{start}
 		return cl
 	}
 
@@ -90,7 +64,7 @@ func walkTrans(parent *tran, length, threshold int, ch chan<- Match) *contextLis
 			cl.append(cl2)
 		}
 	}
-	if length >= threshold && len(cl.lists) > 1 {
+	if length >= threshold && len(cl) > 1 {
 		m := Match{cl.getAll(), Pos(length)}
 		ch <- m
 	}

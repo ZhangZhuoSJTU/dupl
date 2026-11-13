@@ -13,6 +13,7 @@ import (
 
 	"github.com/mibk/dupl/job"
 	"github.com/mibk/dupl/printer"
+	"github.com/mibk/dupl/suffixtree"
 	"github.com/mibk/dupl/syntax"
 )
 
@@ -52,41 +53,45 @@ func main() {
 	if *verbose {
 		log.Println("Building suffix tree")
 	}
-	schan := job.Parse(filesFeed())
-	t, data, done := job.BuildTree(schan)
-	<-done
-
-	// finish stream
-	t.Update(&syntax.Node{Type: -1})
+	t, data := job.BuildTree(job.Parse(filesFeed()))
 
 	if *verbose {
 		log.Println("Searching for clones")
 	}
-	mchan := t.FindDuplOver(*threshold)
-	duplChan := make(chan syntax.Match)
-	go func() {
-		for m := range mchan {
-			match := syntax.FindSyntaxUnits(*data, m, *threshold)
-			if len(match.Frags) > 0 {
-				duplChan <- match
-			}
-		}
-		close(duplChan)
-	}()
-
-	newPrinter := printer.NewText
-	if *html {
-		newPrinter = printer.NewHTML
-	} else if *plumbing {
-		newPrinter = printer.NewPlumbing
-	}
-	p := newPrinter(os.Stdout, ioutil.ReadFile)
-	if err := printDupls(p, duplChan); err != nil {
+	if err := printDupls(newPrinter(), findDupls(t, data, *threshold)); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func filesFeed() chan string {
+// findDupls searches the suffix tree for duplicate token sequences of at
+// least threshold length and streams those that form complete syntax units.
+func findDupls(t *suffixtree.STree, data []*syntax.Node, threshold int) <-chan syntax.Match {
+	duplChan := make(chan syntax.Match)
+	go func() {
+		defer close(duplChan)
+		for m := range t.FindDuplOver(threshold) {
+			match := syntax.FindSyntaxUnits(data, m, threshold)
+			if len(match.Frags) > 0 {
+				duplChan <- match
+			}
+		}
+	}()
+	return duplChan
+}
+
+// newPrinter returns the printer selected by the output flags.
+func newPrinter() printer.Printer {
+	switch {
+	case *html:
+		return printer.NewHTML(os.Stdout, ioutil.ReadFile)
+	case *plumbing:
+		return printer.NewPlumbing(os.Stdout, ioutil.ReadFile)
+	default:
+		return printer.NewText(os.Stdout, ioutil.ReadFile)
+	}
+}
+
+func filesFeed() <-chan string {
 	if *files {
 		fchan := make(chan string)
 		go func() {
@@ -102,7 +107,7 @@ func filesFeed() chan string {
 	return crawlPaths(paths)
 }
 
-func crawlPaths(paths []string) chan string {
+func crawlPaths(paths []string) <-chan string {
 	fchan := make(chan string)
 	go func() {
 		for _, path := range paths {
@@ -158,19 +163,19 @@ func printDupls(p printer.Printer, duplChan <-chan syntax.Match) error {
 	return p.PrintFooter()
 }
 
+// unique drops fragments that start at the same position of the same file.
 func unique(group [][]*syntax.Node) [][]*syntax.Node {
-	fileMap := make(map[string]map[int]struct{})
+	type location struct {
+		filename string
+		pos      int
+	}
+	seen := make(map[location]bool)
 
 	var newGroup [][]*syntax.Node
 	for _, seq := range group {
-		node := seq[0]
-		file, ok := fileMap[node.Filename]
-		if !ok {
-			file = make(map[int]struct{})
-			fileMap[node.Filename] = file
-		}
-		if _, ok := file[node.Pos]; !ok {
-			file[node.Pos] = struct{}{}
+		loc := location{seq[0].Filename, seq[0].Pos}
+		if !seen[loc] {
+			seen[loc] = true
 			newGroup = append(newGroup, seq)
 		}
 	}

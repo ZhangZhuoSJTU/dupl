@@ -6,7 +6,6 @@ import (
 	"html"
 	"io"
 	"regexp"
-	"sort"
 
 	"github.com/mibk/dupl/syntax"
 )
@@ -40,29 +39,10 @@ func (p *htmlprinter) PrintClones(dups [][]*syntax.Node) error {
 	p.iota++
 	fmt.Fprintf(p.w, "<h1>#%d found %d clones</h1>\n", p.iota, len(dups))
 
-	clones := make([]clone, len(dups))
-	for i, dup := range dups {
-		cnt := len(dup)
-		if cnt == 0 {
-			panic("zero length dup")
-		}
-		nstart := dup[0]
-		nend := dup[cnt-1]
-
-		file, err := p.ReadFile(nstart.Filename)
-		if err != nil {
-			return err
-		}
-
-		lineStart, _ := blockLines(file, nstart.Pos, nend.End)
-		cl := clone{filename: nstart.Filename, lineStart: lineStart}
-		start := findLineBeg(file, nstart.Pos)
-		content := append(toWhitespace(file[start:nstart.Pos]), file[nstart.Pos:nend.End]...)
-		cl.fragment = deindent(content)
-		clones[i] = cl
+	clones, err := clonesInfo(p.ReadFile, dups, true)
+	if err != nil {
+		return err
 	}
-
-	sort.Sort(byNameAndLine(clones))
 	for _, cl := range clones {
 		fmt.Fprintf(p.w, "<h2>%s:%d</h2>\n<pre>%s</pre>\n", cl.filename, cl.lineStart,
 			html.EscapeString(string(cl.fragment)))
@@ -71,6 +51,15 @@ func (p *htmlprinter) PrintClones(dups [][]*syntax.Node) error {
 }
 
 func (*htmlprinter) PrintFooter() error { return nil }
+
+// fragment returns the source code between from and to, de-indented, with
+// the text preceding it on the first line replaced by whitespace so that
+// its alignment is preserved.
+func fragment(file []byte, from, to int) []byte {
+	start := findLineBeg(file, from)
+	content := append(toWhitespace(file[start:from]), file[from:to]...)
+	return deindent(content)
+}
 
 func findLineBeg(file []byte, index int) int {
 	for i := index; i >= 0; i-- {

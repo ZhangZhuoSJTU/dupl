@@ -7,8 +7,9 @@ import (
 	"github.com/mibk/dupl/syntax/golang"
 )
 
-func Parse(fchan chan string) chan []*syntax.Node {
-
+// Parse parses the Go files received on fchan and streams their serialized
+// syntax trees. Files that fail to parse are logged and skipped.
+func Parse(fchan <-chan string) <-chan []*syntax.Node {
 	// parse AST
 	achan := make(chan *syntax.Node)
 	go func() {
@@ -27,8 +28,7 @@ func Parse(fchan chan string) chan []*syntax.Node {
 	schan := make(chan []*syntax.Node)
 	go func() {
 		for ast := range achan {
-			seq := syntax.Serialize(ast)
-			schan <- seq
+			schan <- syntax.Serialize(ast)
 		}
 		close(schan)
 	}()

@@ -3,7 +3,6 @@ package printer
 import (
 	"fmt"
 	"io"
-	"sort"
 
 	"github.com/mibk/dupl/syntax"
 )
@@ -20,11 +19,10 @@ func NewPlumbing(w io.Writer, fread ReadFile) Printer {
 func (p *plumbing) PrintHeader() error { return nil }
 
 func (p *plumbing) PrintClones(dups [][]*syntax.Node) error {
-	clones, err := prepareClonesInfo(p.ReadFile, dups)
+	clones, err := clonesInfo(p.ReadFile, dups, false)
 	if err != nil {
 		return err
 	}
-	sort.Sort(byNameAndLine(clones))
 	for i, cl := range clones {
 		nextCl := clones[(i+1)%len(clones)]
 		fmt.Fprintf(p.w, "%s:%d-%d: duplicate of %s:%d-%d\n", cl.filename, cl.lineStart, cl.lineEnd,
